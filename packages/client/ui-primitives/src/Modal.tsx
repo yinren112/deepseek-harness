@@ -3,8 +3,8 @@
 // cannot leave sticky page controls above the mask. This is still an in-page
 // WebUI dialog; it never creates or targets another browser/native window.
 
-import { useEffect } from 'react'
-import type { ReactNode } from 'react'
+import { useEffect, useRef } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import clsx from 'clsx'
 import { IconCloseOutline16 } from './icons/index.tsx'
@@ -41,14 +41,52 @@ export function Modal({
   contentClassName?: string
   headless?: boolean
 }) {
+  const dialogRef = useRef<HTMLDivElement | null>(null)
+  const restoreFocusRef = useRef<HTMLElement | null>(null)
+
+  if (open && restoreFocusRef.current === null && document.activeElement instanceof HTMLElement) {
+    restoreFocusRef.current = document.activeElement
+  }
+
   useEffect(() => {
     if (!open) return
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+    const appRoot = document.getElementById('root')
+    const previousInert = appRoot?.inert
+    if (appRoot !== null) appRoot.inert = true
+    const dialog = dialogRef.current
+    if (dialog !== null && !dialog.contains(document.activeElement)) {
+      dialog.querySelector<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')?.focus()
     }
-    document.addEventListener('keydown', onKeyDown)
-    return () => { document.removeEventListener('keydown', onKeyDown) }
-  }, [open, onClose])
+    return () => {
+      if (appRoot !== null && previousInert !== undefined) appRoot.inert = previousInert
+      restoreFocusRef.current?.focus()
+      restoreFocusRef.current = null
+    }
+  }, [open])
+
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
+    if (event.key === 'Escape') {
+      event.stopPropagation()
+      onClose()
+      return
+    }
+    if (event.key !== 'Tab') return
+    const dialog = dialogRef.current
+    if (dialog === null) return
+    const focusable = [...dialog.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')]
+    const first = focusable[0]
+    const last = focusable.at(-1)
+    if (first === undefined || last === undefined) {
+      event.preventDefault()
+      dialog.focus()
+    } else if (event.shiftKey && (document.activeElement === first || document.activeElement === dialog)) {
+      event.preventDefault()
+      last.focus()
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault()
+      first.focus()
+    }
+  }
 
   if (!open) return null
 
@@ -56,10 +94,13 @@ export function Modal({
     <div className={css.root} role="presentation">
       <div className={css.mask} aria-hidden="true" onClick={onClose} />
       <div
+        ref={dialogRef}
         className={clsx(css.dialog, className)}
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        tabIndex={-1}
+        onKeyDown={onKeyDown}
       >
         {headless
           ? children
